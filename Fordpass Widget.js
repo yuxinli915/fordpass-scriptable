@@ -28,10 +28,15 @@
 Changelog:
     v1.0.0:
         - Newly Remastered version of Damians Scriptable widget with a new look and feel
+    v1.0.1:
+        - Added remote start to ignition status and remote stop to running status
+    v1.0.2:
+        - Merged in changes from @yuxinli915 pull request
+        - Added an vehicle selector to allow quick selection of vehicle icon and name
 
 
 **************/
-const WIDGET_VERSION = '1.0.0';
+const WIDGET_VERSION = '1.0.2';
 //****************************************************************************************************************
 //* Login data for account. It is only working with FordPass credentials and when your car has a FordPass modem!
 //* Check your car configuration. It is not sufficient if your FordPass app shows some data (odometer or oil).
@@ -40,9 +45,23 @@ const userData = {
     fpUsername: 'YOUR_FP_EMAIL_HERE',
     fpPassword: 'FP_PASSWORD_HERE',
     fpVin: 'VEHICLE_VIN',
-    vehicleName: 'Ford Explorer', // Name of vehicle in Map
-    useMetric: true, // This will define whether the widget uses us or non-US text and units
+    vehicleType: 1, // 1 = 2021 F-150, 2 = 2020 Explorer
+    useMetric: false, // This will define whether the widget uses us or non-US text and units
     mapProvider: 'apple', // or 'google'
+};
+
+// name = Label of the vehicle shown in the Map
+// icon = vehicle Icon shown in the widget
+// Create a new item to include your vehicle (Please submit a pull request if you want to add your vehicle officially.  Please include the icon so I can add it to the repository)
+const vehicleSelector = {
+    1: {
+        name: 'Ford F-150',
+        icon: 'F150_2021.png',
+    },
+    2: {
+        name: 'Ford Explorer',
+        icon: '2020_Explorer.png',
+    },
 };
 
 //******************************************************************
@@ -73,7 +92,6 @@ const textValues = {
     elemHeaders: {
         fuelTank: 'Fuel',
         odometer: 'Mileage',
-        odometerLease: 'Mileage',
         oil: 'Oil Life',
         windows: 'Windows',
         doors: 'Doors',
@@ -120,7 +138,7 @@ const textValues = {
 
 const isDarkMode = Device.isUsingDarkAppearance();
 const runtimeData = {
-    vehicleIcon: '2020_Explorer.png',
+    vehicleIcon: vehicleSelector[userData.vehicleType].icon,
     textColor1: isDarkMode ? 'EDEDED' : '000000', // Header Text Color
     textColor2: isDarkMode ? 'EDEDED' : '000000', // Value Text Color
     backColor: isDarkMode ? '111111' : 'FFFFFF', // Background Color'
@@ -217,8 +235,6 @@ async function createMenu() {
 
     alert.addAction('Cancel'); //8
 
-    alert.addAction('Test Alerts'); //9
-
     const respIndex = await alert.presentSheet();
 
     switch (respIndex) {
@@ -264,13 +280,6 @@ async function createMenu() {
             break;
         case 8:
             console.log('Cancel was pressed');
-            break;
-        case 9:
-            console.log('Test Alerts was pressed');
-            await showAlert(
-                `TEST Command`,
-                `Vehicle Received Command Successfully`,
-            );
             break;
     }
 }
@@ -928,13 +937,7 @@ async function createTireElement(srcField, carData) {
     await createTitle(titleFld, 'tirePressure');
 
     let dataFld = await createRow(srcField);
-    let value = `${getTirePressure(
-        carData.tirePressure['leftFront'],
-    )} | ${getTirePressure(
-        carData.tirePressure['rightFront'],
-    )}\n${getTirePressure(
-        carData.tirePressure['leftRear'],
-    )} | ${getTirePressure(carData.tirePressure['rightRear'])}`;
+    let value = `${carData.tirePressure['leftFront']} | ${carData.tirePressure['rightFront']}\n${carData.tirePressure['leftRear']} | ${carData.tirePressure['rightRear']}`;
     let txt = await createText(dataFld, value, {
         font: new Font('Menlo-Regular', sizes.detailFontSizeMedium),
         textColor: new Color(runtimeData.textColor2),
@@ -958,9 +961,9 @@ async function createPositionElement(srcField, carData) {
     let url =
         userData.mapProvider == 'google'
             ? `https://www.google.com/maps/search/?api=1&query=${carData.latitude},${carData.longitude}`
-            : `http://maps.apple.com/?q=${encodeURI(userData.vehicleName)}&ll=${
-                  carData.latitude
-              },${carData.longitude}`;
+            : `http://maps.apple.com/?q=${encodeURI(
+                  vehicleSelector[userData.vehicleType].name,
+              )}&ll=${carData.latitude},${carData.longitude}`;
     let value = carData.position
         ? `${carData.position}`
         : textValues.errorMessages.noData;
@@ -1016,18 +1019,29 @@ async function createIgnitionStatusElement(srcField, carData) {
             textColor: new Color('#5A65C0'),
         },
     };
+    let remStartOn =
+        carData.remoteStartStatus && carData.remoteStartStatus.running
+            ? true
+            : false;
+    let status = '';
+    if (remStartOn) {
+        status = `Remote Start (ON)`;
+    } else if (carData.ignitionStatus != undefined) {
+        status = carData.ignitionStatus.toUpperCase();
+    } else {
+        textValues.errorMessages.noData;
+    }
     let offset = 10;
     let titleFld = await createRow(srcField);
     await createTitle(titleFld, 'ignitionStatus');
     titleFld.addSpacer(2);
     let dataFld = await createRow(srcField);
-    let value = carData.ignitionStatus
-        ? carData.ignitionStatus.toUpperCase()
-        : textValues.errorMessages.noData;
     let text = await createText(
         dataFld,
-        value,
-        carData.ignitionStatus !== undefined && carData.ignitionStatus !== 'Off'
+        status,
+        (carData.ignitionStatus !== undefined &&
+            carData.ignitionStatus === 'On') ||
+            remStartOn
             ? styles.statOn
             : styles.statOff,
     );
@@ -1335,9 +1349,11 @@ async function sendVehicleCmd(cmd_type = '') {
                         console.log(data);
                     }
                     if (data.status == 590) {
+                        console.log('code 590');
+                        console.log(`isLastCmd: ${isLastCmd}`);
                         outMsg = {
                             title: `${cmd_type.toUpperCase()} Command`,
-                            message: `Command Failed!\n\nPlease Start the Vehicle Before Running this Command Again`,
+                            message: `Command Failed!\n\nVehicle failed to start. You must start your vehicle from the inside after two consecutive remote start events. `,
                         };
                     } else {
                         errMsg = `Command Error: ${JSON.stringify(data)}`;
@@ -1357,6 +1373,9 @@ async function sendVehicleCmd(cmd_type = '') {
             if (wasError) {
                 if (errMsg) {
                     console.log(`sendVehicleCmd(${cmd_type}) Error: ${errMsg}`);
+                }
+                if (outMsg.message !== '') {
+                    await showAlert(outMsg.title, outMsg.message);
                 }
                 return;
             } else {
@@ -1482,15 +1501,16 @@ async function fetchCarData() {
     carData.remoteStartStatus = {
         running: vehicleStatus.remoteStartStatus
             ? vehicleStatus.remoteStartStatus.value === 0
-                ? 'Off'
-                : 'On'
-            : 'Off',
+                ? false
+                : true
+            : false,
         duration:
             vehicleStatus.remoteStart &&
             vehicleStatus.remoteStart.remoteStartDuration
                 ? vehicleStatus.remoteStart.remoteStartDuration.value
                 : 0,
     };
+    console.log(`Remote Start Status: ${vehicleStatus.remoteStart.toString()}`);
 
     // Alarm status
     carData.alarmStatus = vehicleStatus.alarm
@@ -1603,7 +1623,7 @@ async function getImage(image) {
     } else {
         // download once
         let repoPath =
-            'https://raw.githubusercontent.com/yuxinli915/fordpass-scriptable/main/icons/';
+            'https://raw.githubusercontent.com/tonesto7/fordpass-scriptable/main/icons/';
         let imageUrl;
         switch (image) {
             case 'gas-station_light.png':
@@ -1614,7 +1634,7 @@ async function getImage(image) {
                 break;
             default:
                 imageUrl =
-                    'https://raw.githubusercontent.com/yuxinli915/fordpass-scriptable/main/icons/' +
+                    'https://raw.githubusercontent.com/tonesto7/fordpass-scriptable/main/icons/' +
                     image;
             // console.log(`FP: Sorry, couldn't find a url for ${image}.`);
         }
@@ -1753,12 +1773,10 @@ function calculateDurationLeasing() {
 }
 
 function pressureToFixed(pressure, digits) {
-    if (userData.useMetric) {
-        return pressure ? Number.parseFloat(pressure).toFixed(digits) : -1;
+    if (widgetConfig.unitOfPressure != 'psi' || userData.useMetric) {
+        return pressure || -1;
     } else {
-        return pressure
-            ? (Number.parseFloat(pressure) * 0.15).toFixed(digits)
-            : -1;
+        return pressure ? (pressure * 0.145).toFixed(digits) : -1;
     }
 }
 
